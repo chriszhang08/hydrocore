@@ -3,6 +3,8 @@ import math
 
 LIFETIME = 10  # years
 WACC = 0.1  # 10% discount rate
+CAPACITY_FACTOR = 0.8  # 80% capacity factor
+
 def calculate_wacc(DF, RROE, IR, TR, inflation):
     """
     Calculate the Weighted Average Cost of Capital (WACC).
@@ -47,51 +49,42 @@ def calculate_crf(WACC, lifetime):
     return crf
 
 
-def calculate_stack_replacements(economic_lifetime_years, operating_hours_per_year, stack_durability_hours):
+def calculate_stack_cost(electrolyzer, cf=CAPACITY_FACTOR):
     """
     Calculate the number of stack replacements during the economic lifetime of an electrolysis unit.
-
-    Parameters:
-    - economic_lifetime_years (int or float): Expected lifetime of the electrolyzer in years.
-    - operating_hours_per_year (int or float): Number of hours the electrolyzer operates per year.
-    - stack_durability_hours (int or float): Expected durability of the electrolyzer stack in hours.
 
     Returns:
     - int: Number of stack replacements required.
     """
-    total_operating_hours = economic_lifetime_years * operating_hours_per_year
-    stack_replacements = math.floor(total_operating_hours / stack_durability_hours)  # Round down
+    total_operating_hours = electrolyzer_options[electrolyzer]["lifetime_years"] * cf * 8760  # 8760 hours in a year
+    stack_replacements = math.floor(total_operating_hours / electrolyzer_options[electrolyzer]["stack_durability"])  # Round down
 
-    return stack_replacements
-
-# Example usage
-economic_lifetime = 20  # years
-operating_hours_per_year = 8000  # hours per year
-stack_durability = 60000  # hours
-
-replacements = calculate_stack_replacements(economic_lifetime, operating_hours_per_year, stack_durability)
-print(f"Number of stack replacements required: {replacements}")
+    return stack_replacements * electrolyzer_options[electrolyzer]["stack_cost"]
 
 
-def net_present_value(cost_of_capital, yearly_hydrogen_output):
+def total_capex(capex_per_kw, size_kw, bop_cost):
     """
-    Calculate the Net Present Value (NPV) of a hydrogen production project.
+    Calculate the total capital expenditure (CAPEX) for an electrolyzer system.
 
     Parameters:
-    - cost_of_capital (float): Discount rate or cost of capital.
-    - hydrogen_output (int): total hydrogen output over lifetime of the project.
+    - capex_per_kw (float): Capital cost per kilowatt ($/kW)
+    - size_kw (float): Size of the electrolyzer system in kilowatts (kW)
+    - bop_cost (float): Cost of balance of plant equipment ($)
 
     Returns:
-    - float: Net Present Value of the project.
+    - float: Total capital expenditure ($)
     """
-    # todo
+    cost_of_stack_replacements = calculate_stack_cost("PEM")
+
+    return capex_per_kw * size_kw + bop_cost + cost_of_stack_replacements
 
 def calculate_hydrogen_cost(
         electricity_cost_per_mwh,  # Electricity cost in $/MWh
         electrolyzer,  # Type of electrolyzer (e.g., "PEM", "Alkaline")
-        capacity_factor,  # Electrolyzer utilization as a fraction (e.g., 0.8 for 80%)
+        system_size_kw, # Electrolyzer system size in kilowatts (kW)
         o_and_m_cost_per_kg,  # Fixed O&M cost per kg of H2 ($/kg)
-        discount_rate  # Weighted Average Cost of Capital (WACC %)
+        cf=CAPACITY_FACTOR,  # Electrolyzer utilization as a fraction (e.g., 0.8 for 80%)
+        wacc=WACC,  # Weighted Average Cost of Capital (WACC) as a decimal
 ):
     """
     Calculate the Levelized Cost of Hydrogen (LCOH) in $/kg H2.
@@ -112,12 +105,12 @@ def calculate_hydrogen_cost(
     # Electricity cost per kg H2
     electricity_cost_per_kg = electricity_cost_per_kwh * electrolyzer_efficiency_kwh_per_kg
 
-    # Annualized capital cost using Capital Recovery Factor (CRF)
-    # crf = net_present_value(# TODO)
-
     # Capital cost per kg H2 (spread over the lifetime of the electrolyzer)
-    capital_cost_per_kg = (electrolyzer_capex_per_kw * crf) / \
-                          (electrolyzer_efficiency_kwh_per_kg * capacity_factor * 8760)  # Annual operating hours
+    capital_cost = calculate_crf(wacc, electrolyzer_lifetime_years) * total_capex(electrolyzer_capex_per_kw, system_size_kw, 0)
+
+    kg_hydrogen = cf * 8760 * system_size_kw / electrolyzer_efficiency_kwh_per_kg
+
+    capital_cost_per_kg = capital_cost / kg_hydrogen
 
     # Total cost per kg H2
     lcoh = capital_cost_per_kg + electricity_cost_per_kg + o_and_m_cost_per_kg
@@ -129,12 +122,18 @@ electrolyzer_options = {
     "PEM": {
         "capex_per_kw": 400,  # $400/kW
         "efficiency_kwh_per_kg": 50,  # 50 kWh/kg H2
-        "lifetime_years": 20  # 20-year lifespan
+        "lifetime_years": 20,  # 20-year lifespan
+        "efficiency": 0.7,  # calculated as higher heating value (HHV) efficiency
+        "stack_durability": 60000,  # 60,000 hours
+        "stack_cost": 5000  # $5000 per stack replacement
     },
     "Alkaline": {
         "capex_per_kw": 300,  # $300/kW
         "efficiency_kwh_per_kg": 55,  # 55 kWh/kg H2
-        "lifetime_years": 30  # 30-year lifespan
+        "lifetime_years": 30,  # 30-year lifespan
+        "efficiency": 0.6,  # calculated as higher heating value (HHV) efficiency
+        "stack_durability": 80000,  # 80,000 hours
+        "stack_cost": 4000  # $4000 per stack replacement
     }
 }
 
@@ -143,9 +142,8 @@ electrolyzer_options = {
 lcoh = calculate_hydrogen_cost(
     electricity_cost_per_mwh=50,  # $50/MWh
     electrolyzer="PEM",  # Proton Exchange Membrane electrolyzer
-    capacity_factor=1,  # 80% utilization
+    system_size_kw=1000,  # 1 MW electrolyzer
     o_and_m_cost_per_kg=1.0,  # $1/kg H2 O&M cost
-    discount_rate=0.08  # 8% WACC
 )
 
 print(f"Estimated Levelized Cost of Hydrogen: ${lcoh}/kg H₂")
