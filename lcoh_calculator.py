@@ -78,7 +78,7 @@ def total_capex(capex_per_kw, size_kw, bop_cost):
 
     return capex_per_kw * size_kw + bop_cost + cost_of_stack_replacements
 
-def calculate_hydrogen_cost(
+def calculate_lcoh(
         electricity_cost_per_mwh,  # Electricity cost in $/MWh
         electrolyzer,  # Type of electrolyzer (e.g., "PEM", "Alkaline")
         system_size_kw, # Electrolyzer system size in kilowatts (kW)
@@ -139,7 +139,7 @@ electrolyzer_options = {
 
 
 # Example usage with realistic assumptions
-lcoh = calculate_hydrogen_cost(
+lcoh = calculate_lcoh(
     electricity_cost_per_mwh=50,  # $50/MWh
     electrolyzer="PEM",  # Proton Exchange Membrane electrolyzer
     system_size_kw=1000,  # 1 MW electrolyzer
