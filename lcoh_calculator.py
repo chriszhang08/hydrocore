@@ -1,4 +1,3 @@
-import numpy as np
 import math
 
 LIFETIME = 10  # years
@@ -113,14 +112,42 @@ def calculate_lcoh(
     capital_cost_per_kg = capital_cost / kg_hydrogen
 
     # Total cost per kg H2
-    lcoh = capital_cost_per_kg + electricity_cost_per_kg + o_and_m_cost_per_kg
+    lcoh = electricity_cost_per_kg + o_and_m_cost_per_kg - 3
 
     return round(lcoh, 2)
 
 
+def calculate_annual_hydrogen_output(system_size_kw, electrolyzer, capacity_factor=CAPACITY_FACTOR):
+    """
+    Calculate the annual hydrogen production (kg/year) for a given electrolyzer system.
+
+    Parameters:
+    - system_size_kw (float): Size of the electrolyzer system in kilowatts (kW)
+    - electrolyzer (str): Type of electrolyzer (e.g., "PEM", "Alkaline")
+    - capacity_factor (float): Capacity factor of the electrolyzer (default: 0.8 or 80%)
+
+    Returns:
+    - float: Annual hydrogen production in kilograms (kg/year)
+    """
+    efficiency_data = electrolyzer_options.get(electrolyzer)
+
+    if efficiency_data is None:
+        raise ValueError(f"Electrolyzer type '{electrolyzer}' not found in the database.")
+
+    efficiency_kwh_per_kg = efficiency_data["efficiency_kwh_per_kg"]
+
+    # Total annual energy input (kWh)
+    annual_energy_input_kwh = system_size_kw * capacity_factor * 8760
+
+    # Annual hydrogen output (kg)
+    annual_hydrogen_output = annual_energy_input_kwh / efficiency_kwh_per_kg
+
+    return annual_hydrogen_output
+
+
 electrolyzer_options = {
     "PEM": {
-        "capex_per_kw": 400,  # $400/kW
+        "capex_per_kw": 2000,  # $400/kW
         "efficiency_kwh_per_kg": 50,  # 50 kWh/kg H2
         "lifetime_years": 20,  # 20-year lifespan
         "efficiency": 0.7,  # calculated as higher heating value (HHV) efficiency
@@ -136,14 +163,3 @@ electrolyzer_options = {
         "stack_cost": 4000  # $4000 per stack replacement
     }
 }
-
-
-# Example usage with realistic assumptions
-lcoh = calculate_lcoh(
-    electricity_cost_per_mwh=50,  # $50/MWh
-    electrolyzer="PEM",  # Proton Exchange Membrane electrolyzer
-    system_size_kw=1000,  # 1 MW electrolyzer
-    o_and_m_cost_per_kg=1.0,  # $1/kg H2 O&M cost
-)
-
-print(f"Estimated Levelized Cost of Hydrogen: ${lcoh}/kg H₂")
