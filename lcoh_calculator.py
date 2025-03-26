@@ -1,4 +1,6 @@
 import math
+import matplotlib.pyplot as plt
+import numpy as np
 
 LIFETIME = 10  # years
 WACC = 0.1  # 10% discount rate
@@ -84,6 +86,7 @@ def calculate_lcoh(
         o_and_m_cost_per_kg,  # Fixed O&M cost per kg of H2 ($/kg)
         cf=CAPACITY_FACTOR,  # Electrolyzer utilization as a fraction (e.g., 0.8 for 80%)
         wacc=WACC,  # Weighted Average Cost of Capital (WACC) as a decimal
+        tax_credit=False,  # Whether to include the federal tax credit
 ):
     """
     Calculate the Levelized Cost of Hydrogen (LCOH) in $/kg H2.
@@ -112,7 +115,10 @@ def calculate_lcoh(
     capital_cost_per_kg = capital_cost / kg_hydrogen
 
     # Total cost per kg H2
-    lcoh = electricity_cost_per_kg + o_and_m_cost_per_kg - 3
+    lcoh = electricity_cost_per_kg + o_and_m_cost_per_kg
+
+    if tax_credit:
+        lcoh = lcoh - 3
 
     return round(lcoh, 2)
 
@@ -150,7 +156,6 @@ electrolyzer_options = {
         "capex_per_kw": 2000,  # $400/kW
         "efficiency_kwh_per_kg": 50,  # 50 kWh/kg H2
         "lifetime_years": 20,  # 20-year lifespan
-        "efficiency": 0.7,  # calculated as higher heating value (HHV) efficiency
         "stack_durability": 60000,  # 60,000 hours
         "stack_cost": 5000  # $5000 per stack replacement
     },
@@ -158,8 +163,47 @@ electrolyzer_options = {
         "capex_per_kw": 300,  # $300/kW
         "efficiency_kwh_per_kg": 55,  # 55 kWh/kg H2
         "lifetime_years": 30,  # 30-year lifespan
-        "efficiency": 0.6,  # calculated as higher heating value (HHV) efficiency
         "stack_durability": 80000,  # 80,000 hours
         "stack_cost": 4000  # $4000 per stack replacement
+    },
+    "SOEC": {
+        "capex_per_kw": 2000,  # $2000/kW
+        "efficiency_kwh_per_kg": 37.5,  # https://www.bloomenergy.com/bloomelectrolyzer/
+        "lifetime_years": 20,
+        "stack_durability": 60000,
+        "stack_cost": 5000
     }
 }
+
+
+LCOH = calculate_lcoh(
+    electricity_cost_per_mwh=50,  # $80/MWh
+    electrolyzer="SOEC",  # Proton Exchange Membrane electrolyzer
+    system_size_kw=1000,  # 1 MW electrolyzer
+    o_and_m_cost_per_kg=1.0,  # $1/kg H2 O&M cost
+)
+
+# create a numpy array of electricity costs
+electric_costs = np.linspace(35, 100, 30)
+lcoh_values = []
+
+for cost in electric_costs:
+    lcoh = calculate_lcoh(
+        electricity_cost_per_mwh=cost,
+        electrolyzer="SOEC",
+        system_size_kw=1000,
+        o_and_m_cost_per_kg=1.0,
+    )
+    if lcoh - 3 < 0:
+        lcoh = 0
+    else:
+        lcoh -= 3
+
+    lcoh_values.append(lcoh)
+
+# graph lcoh values
+plt.plot(electric_costs, lcoh_values)
+plt.xlabel("Electricity Cost ($/MWh)")
+plt.ylabel("LCOH ($/kg)")
+plt.title("LCOH vs. Electricity Cost")
+plt.show()

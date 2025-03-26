@@ -1,4 +1,4 @@
-pandas~=1.3.4
-numpy~=2.0.2
-matplotlib~=3.7.1
-bokeh~=3.7.0
+pandas~=2.2.3
+numpy~=2.2.4
+matplotlib~=3.10.1
+bokeh~=3.7.1
