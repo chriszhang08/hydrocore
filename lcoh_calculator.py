@@ -167,10 +167,10 @@ electrolyzer_options = {
         "stack_cost": 4000  # $4000 per stack replacement
     },
     "SOEC": {
-        "capex_per_kw": 2000,  # $2000/kW
+        "capex_per_kw": 2500,  # $2000/kW + $500/kW BoP cost
         "efficiency_kwh_per_kg": 37.5,  # https://www.bloomenergy.com/bloomelectrolyzer/
         "lifetime_years": 20,
-        "stack_durability": 60000,
+        "stack_durability": 25000,
         "stack_cost": 5000
     }
 }
