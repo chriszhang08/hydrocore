@@ -1,6 +1,7 @@
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
 LIFETIME = 10  # years
 WACC = 0.1  # 10% discount rate
@@ -63,7 +64,26 @@ def calculate_stack_cost(electrolyzer, cf=CAPACITY_FACTOR):
     return stack_replacements * electrolyzer_options[electrolyzer]["stack_cost"]
 
 
-def total_capex(capex_per_kw, size_kw, bop_cost):
+def calculate_stack_cost_arr(electrolyzer_options, system_size, cf=CAPACITY_FACTOR):
+    """
+    Calculate the number of stack replacements during the economic lifetime of an electrolysis unit.
+
+    Returns:
+    - int: Number of stack replacements required.
+    """
+    output_arr = []
+    replacement_cycle_yrs = math.floor(electrolyzer_options["stack_durability"] / (cf * 8760))
+
+    for yr in range(0,electrolyzer_options["lifetime_years"],replacement_cycle_yrs):
+        replacement_cost = electrolyzer_options["stack_cost"][yr] * system_size
+        # annualize cost over replacement cycle
+        annualized_cost = replacement_cost / replacement_cycle_yrs
+        output_arr += [annualized_cost] * replacement_cycle_yrs
+
+    return output_arr
+
+
+def total_capex(capex_per_kw, size_kw):
     """
     Calculate the total capital expenditure (CAPEX) for an electrolyzer system.
 
@@ -75,52 +95,9 @@ def total_capex(capex_per_kw, size_kw, bop_cost):
     Returns:
     - float: Total capital expenditure ($)
     """
-    cost_of_stack_replacements = calculate_stack_cost("PEM")
+    # cost_of_stack_replacements = calculate_stack_cost("PEM")
 
-    return capex_per_kw * size_kw + bop_cost + cost_of_stack_replacements
-
-def calculate_lcoh(
-        electricity_cost_per_mwh,  # Electricity cost in $/MWh
-        electrolyzer,  # Type of electrolyzer (e.g., "PEM", "Alkaline")
-        system_size_kw, # Electrolyzer system size in kilowatts (kW)
-        o_and_m_cost_per_kg,  # Fixed O&M cost per kg of H2 ($/kg)
-        cf=CAPACITY_FACTOR,  # Electrolyzer utilization as a fraction (e.g., 0.8 for 80%)
-        wacc=WACC,  # Weighted Average Cost of Capital (WACC) as a decimal
-        tax_credit=False,  # Whether to include the federal tax credit
-):
-    """
-    Calculate the Levelized Cost of Hydrogen (LCOH) in $/kg H2.
-    """
-
-    # Convert electricity cost to $/kWh
-    electricity_cost_per_kwh = electricity_cost_per_mwh / 1000
-
-    efficiency_data = electrolyzer_options.get(electrolyzer)
-
-    if efficiency_data is None:
-        raise ValueError(f"Electrolyzer type '{electrolyzer}' not found in the database.")
-
-    electrolyzer_capex_per_kw = efficiency_data["capex_per_kw"]
-    electrolyzer_efficiency_kwh_per_kg = efficiency_data["efficiency_kwh_per_kg"]
-    electrolyzer_lifetime_years = efficiency_data["lifetime_years"]
-
-    # Electricity cost per kg H2
-    electricity_cost_per_kg = electricity_cost_per_kwh * electrolyzer_efficiency_kwh_per_kg
-
-    # Capital cost per kg H2 (spread over the lifetime of the electrolyzer)
-    capital_cost = calculate_crf(wacc, electrolyzer_lifetime_years) * total_capex(electrolyzer_capex_per_kw, system_size_kw, 0)
-
-    kg_hydrogen = cf * 8760 * system_size_kw / electrolyzer_efficiency_kwh_per_kg
-
-    capital_cost_per_kg = capital_cost / kg_hydrogen
-
-    # Total cost per kg H2
-    lcoh = electricity_cost_per_kg + o_and_m_cost_per_kg
-
-    if tax_credit:
-        lcoh = lcoh - 3
-
-    return round(lcoh, 2)
+    return capex_per_kw * size_kw
 
 
 def calculate_annual_hydrogen_output(system_size_kw, electrolyzer, capacity_factor=CAPACITY_FACTOR):
@@ -151,13 +128,90 @@ def calculate_annual_hydrogen_output(system_size_kw, electrolyzer, capacity_fact
     return annual_hydrogen_output
 
 
+def get_elec_cost_matrix(efficiency_data):
+    ELECTRICITY_COST_CURVE = np.linspace(60, 50, efficiency_data["lifetime_years"])  # $/MWh
+    # create a numpy array of electricity costs
+    cost_matrix = np.zeros((len(ELECTRICITY_COST_CURVE), 100))
+
+    for yr in range(0,efficiency_data["lifetime_years"]):
+        mean = ELECTRICITY_COST_CURVE[yr]
+        x = np.linspace(0.01, 1, 100)
+
+        # Apply a log transformation to create left-skew
+        log_values = np.log(x + 1)  # Log function introduces skew
+
+        # Normalize and scale to center around yearly mean
+        min_val, max_val = np.min(log_values), np.max(log_values)
+        elec_prices_yr_distr = (mean + 30) - (log_values - min_val) / (max_val - min_val) * mean  # Scaling to range [30, mean + 30]
+
+        # Calculate the cost of electricity per kg of hydrogen
+        elec_prices_yr_distr = elec_prices_yr_distr * efficiency_data["efficiency_kwh_per_kg"] / 1000  # Convert to $/kg H2
+
+        cost_matrix[yr] = elec_prices_yr_distr
+
+    return cost_matrix
+
+def calculate_lcoh(
+        electrolyzer,  # Type of electrolyzer (e.g., "PEM", "Alkaline")
+        system_size_kw, # Electrolyzer system size in kilowatts (kW)
+        o_and_m_cost_per_kg,  # Fixed O&M cost per kg of H2 ($/kg)
+        cf=CAPACITY_FACTOR,  # Electrolyzer utilization as a fraction (e.g., 0.8 for 80%)
+        wacc=WACC,  # Weighted Average Cost of Capital (WACC) as a decimal
+        include_capital=True,  # Toggle between operating vs levelized COH
+):
+    """
+    Calculate the Cost of Hydrogen (LCOH) in $/kg H2.
+    Includes a sensitivity analysis for the cost of electricity and stack cost
+    """
+    efficiency_data = electrolyzer_options.get(electrolyzer)
+
+    if efficiency_data is None:
+        raise ValueError(f"Electrolyzer type '{electrolyzer}' not found in the database.")
+
+    electrolyzer_capex_per_kw = efficiency_data["capex_per_kw"]
+    electrolyzer_lifetime_years = efficiency_data["lifetime_years"]
+
+    lcoh_matrix = get_elec_cost_matrix(efficiency_data)
+
+    # Capital cost per kg H2 (spread over the lifetime of the electrolyzer)
+    if include_capital:
+        capital_cost = calculate_crf(wacc, electrolyzer_lifetime_years) * total_capex(electrolyzer_capex_per_kw, system_size_kw)
+    else:
+        capital_cost = 0
+
+    kg_hydrogen = calculate_annual_hydrogen_output(system_size_kw, electrolyzer)
+
+    capital_cost_per_kg = capital_cost / kg_hydrogen
+
+    stack_cost_arr = calculate_stack_cost_arr(efficiency_data, system_size_kw, cf)
+    # divide each element by kg_hydrogen
+    stack_cost_arr = [x / kg_hydrogen for x in stack_cost_arr]
+
+    # for each year, add the stack cost to the lcoh_matrix
+    for i in range(len(lcoh_matrix)):
+        lcoh_matrix[i] += stack_cost_arr[i]
+        lcoh_matrix[i] += o_and_m_cost_per_kg
+
+    # duplicate the matrix
+    lcoh_matrix_new = lcoh_matrix.copy()
+    # subtract the tax credit from the matrix, set to 0 if negative
+    tax_credit = 3
+    lcoh_matrix_new = np.where(lcoh_matrix_new - tax_credit < 0, 0, lcoh_matrix_new - tax_credit)
+
+    # weight the tax credit more heavily
+    for i in range(3):
+        lcoh_matrix = np.hstack((lcoh_matrix, lcoh_matrix_new))
+
+    return lcoh_matrix
+
+
 electrolyzer_options = {
     "PEM": {
         "capex_per_kw": 2000,  # $400/kW
         "efficiency_kwh_per_kg": 50,  # 50 kWh/kg H2
         "lifetime_years": 20,  # 20-year lifespan
         "stack_durability": 60000,  # 60,000 hours
-        "stack_cost": 5000  # $5000 per stack replacement
+        "stack_cost": 50  # $500/kW for stack replacement
     },
     "Alkaline": {
         "capex_per_kw": 300,  # $300/kW
@@ -169,41 +223,34 @@ electrolyzer_options = {
     "SOEC": {
         "capex_per_kw": 2500,  # $2000/kW + $500/kW BoP cost
         "efficiency_kwh_per_kg": 37.5,  # https://www.bloomenergy.com/bloomelectrolyzer/
-        "lifetime_years": 20,
+        "lifetime_years": 10,
         "stack_durability": 25000,
-        "stack_cost": 5000
+        "stack_cost": np.linspace(200,50,10)  # stack cost per kW for 10 years
     }
 }
 
 
 LCOH = calculate_lcoh(
-    electricity_cost_per_mwh=50,  # $80/MWh
     electrolyzer="SOEC",  # Proton Exchange Membrane electrolyzer
     system_size_kw=1000,  # 1 MW electrolyzer
     o_and_m_cost_per_kg=1.0,  # $1/kg H2 O&M cost
 )
+years = np.arange(2025, 2025 + 10)  # Years from 2025 to 2034
 
-# create a numpy array of electricity costs
-electric_costs = np.linspace(35, 100, 30)
-lcoh_values = []
+# Create violin plot
+plt.figure(figsize=(10, 6))
+plt.boxplot(LCOH.T, positions=years, widths=0.6, patch_artist=True,
+            boxprops=dict(facecolor='lightblue', color='blue'),
+            whiskerprops=dict(color='black'),
+            capprops=dict(color='black'),
+            medianprops=dict(color='red'),
+            showfliers=False,)
 
-for cost in electric_costs:
-    lcoh = calculate_lcoh(
-        electricity_cost_per_mwh=cost,
-        electrolyzer="SOEC",
-        system_size_kw=1000,
-        o_and_m_cost_per_kg=1.0,
-    )
-    if lcoh - 3 < 0:
-        lcoh = 0
-    else:
-        lcoh -= 3
+# Formatting
+plt.xticks(ticks=years)
+plt.xlabel("Year")
+plt.ylabel("LCOH ($/kg H₂)")
+plt.title("Monte Carlo Sim of Operating Cost of Hydrogen Over Time")
 
-    lcoh_values.append(lcoh)
-
-# graph lcoh values
-plt.plot(electric_costs, lcoh_values)
-plt.xlabel("Electricity Cost ($/MWh)")
-plt.ylabel("LCOH ($/kg)")
-plt.title("LCOH vs. Electricity Cost")
+# Show the plot
 plt.show()
